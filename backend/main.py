@@ -9,12 +9,13 @@ manual setup step needed.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from decimal import Decimal
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.agent import run_agent
 from backend.db import get_order, init_db, record_refund, total_refunded
@@ -41,7 +42,7 @@ app.add_middleware(
 
 
 class RefundRequest(BaseModel):
-    amount: float
+    amount: Decimal = Field(gt=0, allow_inf_nan=False)
 
 
 class MessageRequest(BaseModel):
@@ -59,15 +60,17 @@ def read_order(order_id: str):
 
 @app.post("/orders/{order_id}/refund")
 def refund_order(order_id: str, body: RefundRequest):
-    order = get_order(order_id)
-    if order is None:
-        raise HTTPException(status_code=404, detail=f"No such order: {order_id}")
+    try:
+        total_refunded = record_refund(order_id, body.amount)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    record_refund(order_id, body.amount)
     return {
         "order_id": order_id,
-        "refunded": body.amount,
-        "total_refunded": total_refunded(order_id),
+        "refunded": float(body.amount),
+        "total_refunded": float(total_refunded),
     }
 
 

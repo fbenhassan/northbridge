@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from decimal import Decimal
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent / "acme.db"
@@ -86,10 +87,42 @@ def total_refunded(order_id: str) -> float:
     return total
 
 
-def record_refund(order_id: str, amount: float) -> None:
+def record_refund(order_id: str, amount: Decimal) -> Decimal:
     conn = get_connection()
-    conn.execute(
-        "INSERT INTO refunds (order_id, amount) VALUES (?, ?)", (order_id, amount)
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        order = conn.execute(
+            "SELECT total FROM orders WHERE order_id = ?", (order_id,)
+        ).fetchone()
+        if order is None:
+            raise LookupError(f"No such order: {order_id}")
+        if not amount.is_finite() or amount <= 0:
+            raise ValueError("Refund amount must be a finite positive amount.")
+
+        refunded = sum(
+            (
+                Decimal(str(row["amount"]))
+                for row in conn.execute(
+                    "SELECT amount FROM refunds WHERE order_id = ?", (order_id,)
+                )
+            ),
+            Decimal(0),
+        )
+        remaining = Decimal(str(order["total"])) - refunded
+        if amount > remaining:
+            raise ValueError(
+                f"Refund amount exceeds the remaining balance of {remaining}."
+            )
+
+        conn.execute(
+            "INSERT INTO refunds (order_id, amount) VALUES (?, ?)",
+            (order_id, float(amount)),
+        )
+        total_refunded = refunded + amount
+        conn.commit()
+        return total_refunded
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
