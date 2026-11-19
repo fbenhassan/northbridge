@@ -40,14 +40,15 @@ Content-Type: application/json
   "amount": 999999
 }
 
-### Talk to the support agent (blocking, no streaming, no history kept
-### between calls). Requires GENAI_SUBSCRIPTION_KEY in your .env, since
-### this goes through backend/agent.py for real.
+### Talk to the support agent (blocking, no streaming, no server-side
+### conversation persistence). Requires GENAI_SUBSCRIPTION_KEY in your
+### .env, since this goes through backend/agent.py for real.
 POST {{baseUrl}}/message
 Content-Type: application/json
 
 {
-  "message": "What's the status of order ORD-70211?"
+  "message": "What's the status of order ORD-70211?",
+  "history": []
 }
 
 ### Same endpoint, this time against an order whose notes try to talk the

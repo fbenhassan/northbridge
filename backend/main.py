@@ -10,11 +10,12 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, FiniteFloat
 
 from backend.agent import run_agent
 from backend.db import get_order, init_db, record_refund, total_refunded
@@ -41,11 +42,17 @@ app.add_middleware(
 
 
 class RefundRequest(BaseModel):
-    amount: float
+    amount: FiniteFloat = Field(gt=0)
+
+
+class ChatHistoryMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=4000)
 
 
 class MessageRequest(BaseModel):
-    message: str
+    message: str = Field(min_length=1, max_length=4000)
+    history: list[ChatHistoryMessage] = Field(default_factory=list, max_length=20)
 
 
 @app.get("/orders/{order_id}")
@@ -63,20 +70,27 @@ def refund_order(order_id: str, body: RefundRequest):
     if order is None:
         raise HTTPException(status_code=404, detail=f"No such order: {order_id}")
 
-    record_refund(order_id, body.amount)
+    try:
+        new_total_refunded = record_refund(order_id, body.amount)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {
         "order_id": order_id,
         "refunded": body.amount,
-        "total_refunded": total_refunded(order_id),
+        "total_refunded": new_total_refunded,
     }
 
 
 @app.post("/message")
 def post_message(body: MessageRequest):
     """Single blocking call to the support agent, no streaming. Each call
-    is its own conversation: nothing is kept between requests, so there's
-    no history to send back and forth."""
-    reply = run_agent(body.message)
+    is its own request; the client supplies bounded conversation context."""
+    reply = run_agent(
+        body.message,
+        history=[item.model_dump() for item in body.history],
+    )
     return {"reply": reply}
 
 
